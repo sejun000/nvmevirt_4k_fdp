@@ -268,12 +268,12 @@ static void __nvmev_admin_identify_namespace(int eid)
 	ns->lbaf[6].ds = 12;
 	ns->lbaf[6].rp = NVME_LBAF_RP_BEST;
 
-	ns->nsze = (vdev->ns[nsid].size >> ns->lbaf[ns->flbas].ds);
+	ns->nlbaf = 6;
+	ns->flbas = 3;  // Must be set before nsze calculation
 
+	ns->nsze = (vdev->ns[nsid].size >> ns->lbaf[ns->flbas].ds);
 	ns->ncap = ns->nsze;
 	ns->nuse = ns->nsze;
-	ns->nlbaf = 6;
-	ns->flbas = 3;
 	ns->dps = 0;
 
 	__make_cq_entry(eid, NVME_SC_SUCCESS);
