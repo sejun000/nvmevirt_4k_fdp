@@ -86,7 +86,7 @@ static unsigned int __do_perform_io(int sqid, int sq_entry, unsigned int *result
 
 		get_prp_data((struct nvme_command *)cmd, &sre, sizeof(struct source_range_entry), true);
 
-		offset = sre.saddr << 9;
+		offset = sre.saddr << 12;
 		length = sre.nByte;
 		slm_addr = get_slm_addr(cmd->namespace_copy.sdaddr);
 
@@ -108,7 +108,7 @@ static unsigned int __do_perform_io(int sqid, int sq_entry, unsigned int *result
 			NVMEV_ERROR("Get partition map on relation id %d failed \n", relation_id);
 			return 0;
 		}
-		offset <<= 9;
+		offset <<= 12;
 		index++;
 		length = cmd->common.cdw10[2];
 
@@ -128,8 +128,8 @@ static unsigned int __do_perform_io(int sqid, int sq_entry, unsigned int *result
 		return 0;
 
 	} else {
-		offset = sq_entry(sq_entry).rw.slba << 9;
-		length = (sq_entry(sq_entry).rw.length + 1) << 9;
+		offset = sq_entry(sq_entry).rw.slba << 12;
+		length = (sq_entry(sq_entry).rw.length + 1) << 12;
 	}
 	remaining = length;
 
@@ -189,7 +189,7 @@ static unsigned int __do_perform_io(int sqid, int sq_entry, unsigned int *result
 		remaining -= io_size;
 #if (CSD_ENABLE == 1)
 		if (opcode == nvme_cmd_freebie_get_partition_map) {
-			offset = freebie_get_lba_of_map_block(relation_id, valid_root_buffer, index) << 9;
+			offset = freebie_get_lba_of_map_block(relation_id, valid_root_buffer, index) << 12;
 			index++;
 		}
 		else
@@ -233,8 +233,8 @@ static unsigned int __do_perform_io_using_dma(int id, int sqid, int sq_entry)
 	size_t io_size;
 	size_t mem_offs = 0;
 
-	offset = sq_entry(sq_entry).rw.slba << 9;
-	length = (sq_entry(sq_entry).rw.length + 1) << 9;
+	offset = sq_entry(sq_entry).rw.slba << 12;
+	length = (sq_entry(sq_entry).rw.length + 1) << 12;
 	remaining = length;
 
 	memset(paddr_list[id], 0, sizeof(paddr_list[id]));
@@ -783,7 +783,7 @@ static void __fill_cq_result(struct nvmev_proc_table *proc_entry)
 
 	if (ns->notify_io_cmd != NULL) {
 		struct nvmev_submission_queue *sq = vdev->sqes[sqid];
-		size_t length = (sq_entry(sq_entry).rw.length + 1) << 9;
+		size_t length = (sq_entry(sq_entry).rw.length + 1) << 12;
 
 		ns->notify_io_cmd(length);
 	}
@@ -862,7 +862,7 @@ static int nvmev_kthread_io(void *data)
 				struct nvme_command *nvme_cmd = (struct nvme_command *)(&sq_entry(pe->sq_entry));
 				if (pe->writeback_cmd || pe->gc_cmd) {
 					;
-				} else if (io_using_dma && (((nvme_cmd->rw.length + 1) << 9) >= 65536) 
+				} else if (io_using_dma && (((nvme_cmd->rw.length + 1) << 12) >= 65536) 
 						&& (nvme_cmd->common.opcode == nvme_cmd_write || nvme_cmd->common.opcode == nvme_cmd_read)) {
 					__do_perform_io_using_dma(pi->id, pe->sqid, pe->sq_entry);
 				} else {
@@ -920,11 +920,11 @@ static int nvmev_kthread_io(void *data)
 					}
 #endif
 					if (cmd->common.opcode == nvme_cmd_write) {
-						uint64_t length = (sq_entry(pe->sq_entry).rw.length + 1) << 9;
+						uint64_t length = (sq_entry(pe->sq_entry).rw.length + 1) << 12;
 						atomic64_add(length, &vdev->host_write);
 					}
 					if (cmd->common.opcode == nvme_cmd_read) {
-						uint64_t length = (sq_entry(pe->sq_entry).rw.length + 1) << 9;
+						uint64_t length = (sq_entry(pe->sq_entry).rw.length + 1) << 12;
 						atomic64_add(length, &vdev->host_read);
 					}
 

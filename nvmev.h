@@ -71,8 +71,8 @@
 #define US_PER_SEC(s) (MS_PER_SEC(s) * 1000)
 #define NS_PER_SEC(s) (US_PER_SEC(s) * 1000)
 
-#define LBA_TO_BYTE(lba) ((lba) << 9)
-#define BYTE_TO_LBA(byte) ((byte) >> 9)
+#define LBA_TO_BYTE(lba) ((lba) << 12)
+#define BYTE_TO_LBA(byte) ((byte) >> 12)
 
 #define INVALID32 (0xFFFFFFFF)
 #define INVALID64 (0xFFFFFFFFFFFFFFFF)

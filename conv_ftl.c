@@ -1292,10 +1292,10 @@ bool conv_namespace_copy(struct nvmev_ns *ns, struct nvmev_request *req, struct 
 
 	uint64_t nsecs_nand_start = 0;
 	size_t block_size = 0;
-	if (sre.nByte < 512) {
+	if (sre.nByte < 4096) {
 		block_size = 1;
 	} else {
-		block_size = sre.nByte / 512 - 1;
+		block_size = sre.nByte / 4096 - 1;
 	}
 
 	// printk("%lld %lld %ld %d\n", sre.saddr, cmd->namespace_copy.sdaddr, block_size, cmd->namespace_copy.control_flag);

@@ -142,7 +142,7 @@ int csdvirt_freebie_repartition_command(struct CSDVirt *csdvirt, const char **in
                 len = leftover_size;
 
             sources->nsid = 1;
-            sources->saddr = fiemap->fm_extents[j].fe_physical / 512;
+            sources->saddr = fiemap->fm_extents[j].fe_physical / 4096;
             sources->nByte = len;
 
             nentry++;
@@ -187,7 +187,7 @@ int csdvirt_freebie_repartition_command(struct CSDVirt *csdvirt, const char **in
                 len = leftover_size;
 
             sources->nsid = 1;
-            sources->saddr = fiemap->fm_extents[j].fe_physical / 512;
+            sources->saddr = fiemap->fm_extents[j].fe_physical / 4096;
             sources->nByte = len;
 
             nentry++;
@@ -256,7 +256,7 @@ int csdvirt_freebie_setup_root_command(struct CSDVirt *csdvirt, const char * fil
 		}
 
 		sources[nentry].nsid = 1;
-		sources[nentry].saddr = fiemap->fm_extents[i].fe_physical / 512;
+		sources[nentry].saddr = fiemap->fm_extents[i].fe_physical / 4096;
 		sources[nentry].nByte = len;
 
 		nentry++;

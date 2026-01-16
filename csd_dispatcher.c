@@ -139,7 +139,7 @@ static size_t __calculate_lba(struct slm_lba_info *slm_info, size_t io_offset)
 	NVMEV_DEBUG("__calculate_lba: i: %d, io_offset: %llu, base_addr: %llu, local_offset: %llu\n", i, io_offset,
 				base_addr, local_offset);
 
-	return base_addr + (local_offset / 512);
+	return base_addr + (local_offset / 4096);
 }
 
 static size_t __calculate_local_offset(struct slm_lba_info *sre_info, size_t io_offset)
@@ -156,7 +156,7 @@ static size_t __calculate_local_offset(struct slm_lba_info *sre_info, size_t io_
 		local_offset -= sre_info->sre[i].nByte;
 	}
 
-	return (local_offset % 512);
+	return (local_offset % 4096);
 }
 
 static size_t __calculate_io_size(struct slm_lba_info *slm_info, size_t io_offset, size_t io_size)
@@ -2070,11 +2070,11 @@ static int slm_work(void *data)
 			io_req = &(io_req_table.io_req[io_req_id]);
 
 			if (io_req->io_req_status == CSD_INTERNAL_IO_REQ_READY) {
-				if (io_req->is_copy_to_slm == true) { 
-					copy_to_slm(io_req->buf_addr, vdev->ns[nsid].mapped + (io_req->lba << 9) + io_req->local_offset, io_req->length);
+				if (io_req->is_copy_to_slm == true) {
+					copy_to_slm(io_req->buf_addr, vdev->ns[nsid].mapped + (io_req->lba << 12) + io_req->local_offset, io_req->length);
 				}
 				else {
-					copy_from_slm(vdev->ns[nsid].mapped + (io_req->lba << 9) + io_req->local_offset, io_req->buf_addr, io_req->length);
+					copy_from_slm(vdev->ns[nsid].mapped + (io_req->lba << 12) + io_req->local_offset, io_req->buf_addr, io_req->length);
 				}
 				io_req->io_req_status = CSD_INTERNAL_IO_REQ_WAITING_TIME;
 			}

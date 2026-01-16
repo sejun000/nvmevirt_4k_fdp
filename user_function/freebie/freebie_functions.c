@@ -227,7 +227,7 @@ size_t freebie_get_lba_of_map_block(uint32_t relation_id, uint32_t valid_root_bu
 		local_offset -= slm_info->sre[i].nByte;
 	}
 
-	return base_addr + (local_offset / 512);
+	return base_addr + (local_offset / 4096);
 }
 
 struct slm_lba_info *freebie_get_slm_lba_info(uint32_t relation_id)

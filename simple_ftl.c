@@ -28,7 +28,7 @@ static size_t __cmd_io_size(struct nvme_rw_command *cmd)
 {
 	NVMEV_DEBUG("%d lba %llu length %d, %llx %llx\n", cmd->opcode, cmd->slba, cmd->length, cmd->prp1, cmd->prp2);
 
-	return (cmd->length + 1) << 9;
+	return (cmd->length + 1) << 12;
 }
 
 /* Return the time to complete */
@@ -36,7 +36,7 @@ static unsigned long long __schedule_io_units(int opcode, unsigned long lba, uns
 											  unsigned long long nsecs_start)
 {
 	unsigned int io_unit_size = 1 << vdev->config.io_unit_shift;
-	unsigned int io_unit = (lba >> (vdev->config.io_unit_shift - 9)) % vdev->config.nr_io_units;
+	unsigned int io_unit = (lba >> (vdev->config.io_unit_shift - 12)) % vdev->config.nr_io_units;
 	int nr_io_units = min(vdev->config.nr_io_units, DIV_ROUND_UP(length, io_unit_size));
 
 	unsigned long long latest; /* Time of completion */

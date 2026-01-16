@@ -115,7 +115,7 @@ int CSDVirt::read(char *hostBuf, __u64 lba, size_t len)
 	m_nvmeCmd->data_len = len;
 	m_nvmeCmd->cdw10 = lba & 0xFFFFFFFF;
 	m_nvmeCmd->cdw11 = lba >> 32;
-	m_nvmeCmd->cdw12 = len / 512 - 1;
+	m_nvmeCmd->cdw12 = len / 4096 - 1;
 
 	ret = ioctl(m_fd, NVME_IOCTL_IO_CMD, m_nvmeCmd);
 	if (ret < 0) {
@@ -143,7 +143,7 @@ int CSDVirt::write(char *hostBuf, __u64 lba, size_t len)
 	m_nvmeCmd->data_len = len;
 	m_nvmeCmd->cdw10 = lba & 0xFFFFFFFF;
 	m_nvmeCmd->cdw11 = lba >> 32;
-	m_nvmeCmd->cdw12 = len / 512 - 1;
+	m_nvmeCmd->cdw12 = len / 4096 - 1;
 
 	ret = ioctl(m_fd, NVME_IOCTL_IO_CMD, m_nvmeCmd);
 
@@ -297,7 +297,7 @@ size_t CSDVirt::csdvirt_load(int fd, __u64 device_buf, size_t count, off_t offse
 	size_t len = 0;
 	size_t num_extents = fiemap->fm_mapped_extents;
 	for (int i = 0; i < num_extents; i++) {
-		lba = fiemap->fm_extents[i].fe_physical / 512;
+		lba = fiemap->fm_extents[i].fe_physical / 4096;
 		len = fiemap->fm_extents[i].fe_length;
 		csdvirt_load_raw(lba, device_buf, len);
 
@@ -353,7 +353,7 @@ size_t CSDVirt::csdvirt_load_files(std::string *file_list, int nfiles, __u64 dev
 			}
 
 			sources[nentry].nsid = 1;
-			sources[nentry].saddr = fiemap->fm_extents[i].fe_physical / 512;
+			sources[nentry].saddr = fiemap->fm_extents[i].fe_physical / 4096;
 			sources[nentry].nByte = len;
 
 			nentry++;
@@ -420,7 +420,7 @@ size_t CSDVirt::csdvirt_write_file(void *fiemap, __u64 device_buf, size_t offset
 	/* csdvirt_namespace_copy assumes single SRE. Therefore, we do the calculation here */
 	lba = _calculate_lba((struct fiemap *)fiemap, offset);
 	io_size = _calculate_io_size((struct fiemap *)fiemap, offset, *size);
-	if (io_size % 512 != 0) {
+	if (io_size % 4096 != 0) {
 		printf("\n\n\nMISALIGNED !!!!!!!!!!!!!!!!!!!!!\n\n\n\n");
 		sleep(600);
 		return 0;
@@ -496,7 +496,7 @@ size_t CSDVirt::csdvirt_namespace_copy(__u64 offset, __u64 slm_offset, size_t si
 	int ret = 0;
 	struct source_range_entry source;
 
-	size_t device_lba = offset / 512;
+	size_t device_lba = offset / 4096;
 
 	source.nsid = 1;
 	source.saddr = device_lba;
@@ -819,7 +819,7 @@ int CSDVirt::csdvirt_freebie_repartition_command(std::string *input_file_list, s
 			}
 
 			sources->nsid = 1;
-			sources->saddr = fiemap->fm_extents[j].fe_physical / 512;
+			sources->saddr = fiemap->fm_extents[j].fe_physical / 4096;
 			sources->nByte = len;
 
 			nentry++;
@@ -857,7 +857,7 @@ int CSDVirt::csdvirt_freebie_repartition_command(std::string *input_file_list, s
 			}
 
 			sources->nsid = 1;
-			sources->saddr = fiemap->fm_extents[j].fe_physical / 512;
+			sources->saddr = fiemap->fm_extents[j].fe_physical / 4096;
 			sources->nByte = len;
 
 			nentry++;
@@ -918,7 +918,7 @@ int CSDVirt::csdvirt_freebie_metadata_setup_command(std::string file_path, uint3
 		}
 
 		sources[nentry].nsid = 1;
-		sources[nentry].saddr = fiemap->fm_extents[i].fe_physical / 512;
+		sources[nentry].saddr = fiemap->fm_extents[i].fe_physical / 4096;
 		sources[nentry].nByte = len;
 
 		nentry++;

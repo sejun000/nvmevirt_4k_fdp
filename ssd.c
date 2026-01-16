@@ -80,8 +80,8 @@ void ssd_init_params(struct ssdparams *spp, uint64_t capacity, uint32_t nparts)
 {
 	uint64_t blk_size, total_size;
 
-	spp->secsz = 512;
-	spp->secs_per_pg = 8;
+	spp->secsz = 4096;
+	spp->secs_per_pg = 1;
 	spp->pgsz = spp->secsz * spp->secs_per_pg;
 
 	spp->nchs = NAND_CHANNELS;

@@ -88,7 +88,7 @@ enum {
 #define BLK_SIZE (0) /*BLKS_PER_PLN should not be 0 */
 
 #define MAX_CH_XFER_SIZE (16 * 1024) /* to overlap with pcie transfer */
-#define WRITE_UNIT_SIZE (512)
+#define WRITE_UNIT_SIZE (4096)
 
 #define NAND_CHANNEL_BANDWIDTH (1400ull) //MB/s Spec notes as 1600 MB/s
 #define PCIE_BANDWIDTH (11000ull) //MB/s
@@ -135,7 +135,7 @@ static_assert((ONESHOT_PAGE_SIZE % FLASH_PAGE_SIZE) == 0);
 #define BLK_SIZE (0) /*BLKS_PER_PLN should not be 0 */
 
 #define MAX_CH_XFER_SIZE (16 * 1024) /* to overlap with pcie transfer */
-#define WRITE_UNIT_SIZE (512)
+#define WRITE_UNIT_SIZE (4096)
 
 #define NAND_CHANNEL_BANDWIDTH (800ull) //MB/s
 #define PCIE_BANDWIDTH (3360ull) //MB/s

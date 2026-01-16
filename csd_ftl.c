@@ -64,12 +64,12 @@ struct nvmev_result csd_get_target_latency(uint64_t slba, uint64_t len, unsigned
 
 	uint64_t nsecs_target = 0;
 	uint64_t nsecs_nand_start = 0;
-	// Round up to 512-byte blocks.
-	size_t block_size = ALIGNED_UP(len, 512) / 512; //
-	// if (len < 512) {
+	// Round up to 4096-byte blocks.
+	size_t block_size = ALIGNED_UP(len, 4096) / 4096; //
+	// if (len < 4096) {
 	// 	block_size = 1;
 	// } else {
-	// 	block_size = len / 512 - 1;
+	// 	block_size = len / 4096 - 1;
 	// }
 
 	uint64_t sent_size = 0;
@@ -96,10 +96,10 @@ struct nvmev_result csd_get_target_latency(uint64_t slba, uint64_t len, unsigned
 			NVMEV_ERROR("block size overflow:%lu", temp_len);
 		}
 
-		// Align to 4KiB for SLM access
+		// Align to 4KiB for SLM access (with 4K LBA, each LBA is already 4KiB)
 		{
-			size_t start_lpn = (slba + offset) / 8;
-			size_t end_lpn = (slba + offset + temp_len) / 8;
+			size_t start_lpn = (slba + offset);
+			size_t end_lpn = (slba + offset + temp_len);
 			sent_size += (end_lpn - start_lpn + 1) * 4096;
 		}
 
@@ -149,7 +149,7 @@ uint64_t get_seq_lpn(uint64_t start_lba, size_t max_size)
 	};
 
 	cmd.rw.slba = start_lba;
-	cmd.rw.length = max_size / 512 - 1;
+	cmd.rw.length = max_size / 4096 - 1;
 	cmd.rw.opcode = nvme_test;
 	if (csd_proc_nvme_io_cmd(&internal_ns, &req, &ret) == false) {
 		NVMEV_ERROR("csd_proc_nvme_io_cmd error");

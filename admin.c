@@ -273,7 +273,7 @@ static void __nvmev_admin_identify_namespace(int eid)
 	ns->ncap = ns->nsze;
 	ns->nuse = ns->nsze;
 	ns->nlbaf = 6;
-	ns->flbas = 0;
+	ns->flbas = 3;
 	ns->dps = 0;
 
 	__make_cq_entry(eid, NVME_SC_SUCCESS);

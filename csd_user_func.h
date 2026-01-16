@@ -335,7 +335,7 @@ size_t __magic_grep(void *buf_in, void *buf_out, size_t size, void *param);
 // Node-level information
 #define INTERNAL 0
 #define LEAF 1
-#define BTREE_BLK_SIZE (512)
+#define BTREE_BLK_SIZE (4096)
 
 typedef unsigned char val__t[64];
 #define VAL_SIZE sizeof(val__t)
