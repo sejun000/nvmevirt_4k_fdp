@@ -16,7 +16,7 @@
 #define _CHANNEL_MODEL_H
 
 /* Macros for channel model */
-#define NR_CREDIT_ENTRIES (1024 * 1024)
+#define NR_CREDIT_ENTRIES (8 * 1024 * 1024)  // Increased for large GC bursts
 
 #define PCI_UNIT_TIME_INTERVAL (1000ULL) //ns
 #define PCI_UNIT_XFER_SIZE (128ULL) //bytes

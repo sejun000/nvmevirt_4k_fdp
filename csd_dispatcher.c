@@ -1231,6 +1231,7 @@ static bool __do_perform_dispatch(int sqid, int sq_entry, unsigned int proc_idx,
 static void __fill_cq_result(int sqid, int cqid, int sq_entry, unsigned int command_id, unsigned int status,
 							 size_t result)
 {
+	struct nvmev_submission_queue *sq = vdev->sqes[sqid];
 	struct nvmev_completion_queue *cq = vdev->cqes[cqid];
 	int cq_head;
 
@@ -1240,7 +1241,7 @@ static void __fill_cq_result(int sqid, int cqid, int sq_entry, unsigned int comm
 	cq_head = cq->cq_head;
 	cq_entry(cq_head).command_id = command_id;
 	cq_entry(cq_head).sq_id = sqid;
-	cq_entry(cq_head).sq_head = sq_entry;
+	cq_entry(cq_head).sq_head = sq->sq_head;
 	cq_entry(cq_head).status = cq->phase | (status << 1);
 	cq_entry(cq_head).result0 = result;
 

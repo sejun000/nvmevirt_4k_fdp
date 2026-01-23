@@ -90,17 +90,15 @@ uint64_t chmodel_request(struct channel_model *ch, uint64_t request_time, uint64
 
 	if (ch->valid_len > NR_CREDIT_ENTRIES) {
 		NVMEV_ERROR("[%s] Invalid valid_len %u\n", __FUNCTION__, ch->valid_len);
-		NVMEV_ASSERT(0);
+		ch->valid_len = NR_CREDIT_ENTRIES;
 	}
 
 	//Search request time index
 	request_time_offs = (request_time / UNIT_TIME_INTERVAL) - (cur_time / UNIT_TIME_INTERVAL);
 
 	if (request_time_offs >= NR_CREDIT_ENTRIES) {
-		dump_stack();
-		NVMEV_ERROR("[%s] Need to increase array size %llu %llu %u\n", __FUNCTION__, request_time, cur_time,
+		NVMEV_ERROR_LIMIT("[%s] Need to increase array size %llu %llu %u\n", __FUNCTION__, request_time, cur_time,
 					request_time_offs);
-		NVMEV_ASSERT(0);
 		return request_time; // return minimum delay
 	}
 
@@ -123,10 +121,8 @@ uint64_t chmodel_request(struct channel_model *ch, uint64_t request_time, uint64
 				delay++;
 				pos = next_pos;
 			} else {
-				dump_stack();
-				NVMEV_ERROR("[%s] No free entry %llu %llu %u\n", __FUNCTION__, request_time, cur_time,
+				NVMEV_ERROR_LIMIT("[%s] No free entry %llu %llu %u\n", __FUNCTION__, request_time, cur_time,
 							request_time_offs);
-				NVMEV_ASSERT(0);
 				break;
 			}
 		} else
@@ -179,17 +175,15 @@ uint64_t pci_chmodel_request(struct channel_model *ch, uint64_t request_time, ui
 
 	if (ch->valid_len > NR_CREDIT_ENTRIES) {
 		NVMEV_ERROR("[%s] Invalid valid_len %u\n", __FUNCTION__, ch->valid_len);
-		NVMEV_ASSERT(0);
+		ch->valid_len = NR_CREDIT_ENTRIES;
 	}
 
 	//Search request time index
 	request_time_offs = (request_time / PCI_UNIT_TIME_INTERVAL) - (cur_time / PCI_UNIT_TIME_INTERVAL);
 
 	if (request_time_offs >= NR_CREDIT_ENTRIES) {
-		dump_stack();
-		NVMEV_ERROR("[%s] Need to increase array size %llu %llu %u\n", __FUNCTION__, request_time, cur_time,
+		NVMEV_ERROR_LIMIT("[%s] Need to increase array size %llu %llu %u\n", __FUNCTION__, request_time, cur_time,
 					request_time_offs);
-		NVMEV_ASSERT(0);
 		return request_time; // return minimum delay
 	}
 
@@ -212,10 +206,8 @@ uint64_t pci_chmodel_request(struct channel_model *ch, uint64_t request_time, ui
 				delay++;
 				pos = next_pos;
 			} else {
-				dump_stack();
-				NVMEV_ERROR("[%s] No free entry %llu %llu %u\n", __FUNCTION__, request_time, cur_time,
+				NVMEV_ERROR_LIMIT("[%s] No free entry %llu %llu %u\n", __FUNCTION__, request_time, cur_time,
 							request_time_offs);
-				NVMEV_ASSERT(0);
 				break;
 			}
 		} else

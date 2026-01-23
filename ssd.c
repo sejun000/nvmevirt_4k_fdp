@@ -175,6 +175,8 @@ void ssd_init_params(struct ssdparams *spp, uint64_t capacity, uint32_t nparts)
 		BYTE_TO_GB(total_size), BYTE_TO_MB(total_size), spp->nchs, spp->tt_luns, spp->tt_lines,
 		BYTE_TO_MB(spp->pgs_per_blk * spp->pgsz), BYTE_TO_KB(spp->pgs_per_blk * spp->pgsz),
 		BYTE_TO_MB(spp->pgs_per_line * spp->pgsz), BYTE_TO_KB(spp->pgs_per_line * spp->pgsz));
+	NVMEV_INFO("SSD params: tt_pgs=%lu pgs_per_blk=%d blks_per_pl=%d luns_per_ch=%d pls_per_lun=%d",
+			   spp->tt_pgs, spp->pgs_per_blk, spp->blks_per_pl, spp->luns_per_ch, spp->pls_per_lun);
 }
 
 static void ssd_init_nand_page(struct nand_page *pg, struct ssdparams *spp)
@@ -362,6 +364,8 @@ uint64_t ssd_advance_write_buffer(struct ssd *ssd, uint64_t request_time, uint64
 	return nsecs_latest;
 }
 
+volatile uint64_t g_nand_writes = 0;
+
 uint64_t ssd_advance_nand(struct ssd *ssd, struct nand_cmd *ncmd)
 {
 	int c = ncmd->cmd;
@@ -424,6 +428,7 @@ uint64_t ssd_advance_nand(struct ssd *ssd, struct nand_cmd *ncmd)
 		break;
 
 	case NAND_WRITE:
+		g_nand_writes++;
 		/* write: transfer data through channel first */
 		chnl_stime = (lun->next_lun_avail_time < cmd_stime) ? cmd_stime : lun->next_lun_avail_time;
 

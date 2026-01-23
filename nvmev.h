@@ -30,7 +30,7 @@
 
 // #undef CONFIG_NVMEV_DEBUG_VERBOSE
 
-#define SUPPORT_MULTI_IO_WORKER_BY_SQ 1
+#define SUPPORT_MULTI_IO_WORKER_BY_SQ 0
 
 /*************************/
 #define NVMEV_DRV_NAME "NVMeVirt"
@@ -42,6 +42,7 @@
 
 #define NVMEV_INFO(string, args...) printk(KERN_INFO "%s: " string, NVMEV_DRV_NAME, ##args)
 #define NVMEV_ERROR(string, args...) printk(KERN_ERR "%s: " string, NVMEV_DRV_NAME, ##args)
+#define NVMEV_ERROR_LIMIT(string, args...) printk_ratelimited(KERN_ERR "%s: " string, NVMEV_DRV_NAME, ##args)
 #define NVMEV_ASSERT(x) BUG_ON((!(x)))
 
 #ifdef CONFIG_NVMEV_DEBUG_VERBOSE
@@ -52,7 +53,7 @@
 
 #define NR_MAX_IO_QUEUE 72
 // #define NR_MAX_PARALLEL_IO 1023
-#define NR_MAX_PARALLEL_IO 16384  // Increased for aggressive GC testing
+#define NR_MAX_PARALLEL_IO 2097152  // 2M entries for large GC with millions of valid pages
 
 #define NVMEV_INTX_IRQ 15
 
@@ -93,6 +94,7 @@ struct nvmev_submission_queue {
 	bool phys_contig;
 
 	int queue_size;
+	int sq_head;  /* tracks fetched position for completion sq_head field */
 
 	struct nvmev_sq_stat stat;
 

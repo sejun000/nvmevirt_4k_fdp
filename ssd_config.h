@@ -39,8 +39,8 @@ enum {
  * in Makefile */
 
 // This value should be modified
-#define NR_MAX_RUH 5
-#define NR_MAX_LEVEL 5
+#define NR_MAX_RUH 8    // RUH 0~7 support
+#define NR_MAX_LEVEL 8  // RUH 0~7 support
 
 #if (BASE_SSD == INTEL_OPTANE)
 #define NR_NAMESPACES 1
@@ -84,8 +84,8 @@ enum {
 #define FLASH_PAGE_SIZE (16 * 1024)
 #define ONESHOT_PAGE_SIZE (FLASH_PAGE_SIZE * 3)
 // #define BLKS_PER_PLN (8192)
-#define BLKS_PER_PLN (256)
-#define BLK_SIZE (0) /*BLKS_PER_PLN should not be 0 */
+#define BLKS_PER_PLN (0)
+#define BLK_SIZE (96 * 1024 * 1024)  // 96MB -> line_size = 3GB
 
 #define MAX_CH_XFER_SIZE (16 * 1024) /* to overlap with pcie transfer */
 #define WRITE_UNIT_SIZE (4096)
@@ -110,7 +110,7 @@ enum {
 #define FW_CH_XFER_LATENCY (0)
 #define OP_AREA_PERCENT (0.07)
 
-#define WRITE_BUFFER_SIZE (NAND_CHANNELS * LUNS_PER_NAND_CH * ONESHOT_PAGE_SIZE * 2 * NR_MAX_LEVEL)
+#define WRITE_BUFFER_SIZE (NAND_CHANNELS * LUNS_PER_NAND_CH * ONESHOT_PAGE_SIZE * 16 * NR_MAX_LEVEL)
 #define WRITE_EARLY_COMPLETION 1
 
 static_assert((ONESHOT_PAGE_SIZE % FLASH_PAGE_SIZE) == 0);

@@ -100,7 +100,7 @@ bool nvmev_proc_bars(void)
 	volatile struct __nvme_bar *old_bar = vdev->old_bar;
 	volatile struct nvme_ctrl_regs *bar = vdev->bar;
 	struct nvmev_admin_queue *queue = vdev->admin_q;
-	unsigned int num_pages, i;
+	unsigned int i;
 
 #if 0 /* Read-only register */
 	if (old_bar->cap != bar->u_cap) {
@@ -133,97 +133,20 @@ bool nvmev_proc_bars(void)
 		memcpy(&old_bar->nssr, &bar->nssr, sizeof(old_bar->nssr));
 	}
 #endif
+	/* AQA/ASQ/ACQ: just track changes, actual setup done at CC.EN=1 */
 	if (old_bar->aqa != bar->u_aqa) {
-		// Initalize admin queue
 		NVMEV_DEBUG("%s: aqa 0x%x -> 0x%x\n", __func__, old_bar->aqa, bar->u_aqa);
 		old_bar->aqa = bar->u_aqa;
-
-		if (!queue) {
-			queue = kzalloc_node(sizeof(struct nvmev_admin_queue), GFP_KERNEL, 1);
-			BUG_ON(queue == NULL);
-			WRITE_ONCE(vdev->admin_q, queue);
-		} else {
-			queue = vdev->admin_q;
-		}
-
-		queue->cq_head = 0;
-		queue->phase = 1;
-		queue->sq_depth = bar->aqa.asqs + 1; /* asqs and acqs are 0-based */
-		queue->cq_depth = bar->aqa.acqs + 1;
-
-		vdev->dbs[0] = vdev->old_dbs[0] = 0;
-		vdev->dbs[1] = vdev->old_dbs[1] = 0;
-
 		goto out;
 	}
 	if (old_bar->asq != bar->u_asq) {
-		if (queue == NULL) {
-			/*
-			 * asq/acq can't be updated later than aqa, but in an unlikely case, this
-			 * can be triggered before an aqa update due to memory re-ordering and lack
-			 * of barriers.
-			 *
-			 * If that's the case, simply run the loop again after a full barrier so
-			 * that the aqa code (initializing the admin queue) can run prior to this.
-			 */
-			NVMEV_INFO("asq triggered before aqa, retrying\n");
-			goto out;
-		}
-
 		NVMEV_DEBUG("%s: asq 0x%llx -> 0x%llx\n", __func__, old_bar->asq, bar->u_asq);
 		old_bar->asq = bar->u_asq;
-
-		if (queue->nvme_sq) {
-			kfree(queue->nvme_sq);
-			queue->nvme_sq = NULL;
-		}
-
-		queue->sq_depth = bar->aqa.asqs + 1; /* asqs and acqs are 0-based */
-
-		num_pages = DIV_ROUND_UP(queue->sq_depth * sizeof(struct nvme_command), PAGE_SIZE);
-		queue->nvme_sq = kcalloc_node(num_pages, sizeof(struct nvme_command *), GFP_KERNEL, 1);
-		BUG_ON(!queue->nvme_sq && "Error on setup admin submission queue");
-
-		for (i = 0; i < num_pages; i++) {
-			queue->nvme_sq[i] =
-				page_address(pfn_to_page(vdev->bar->u_asq >> PAGE_SHIFT) + i);
-		}
-
-		vdev->dbs[0] = vdev->old_dbs[0] = 0;
-
 		goto out;
 	}
 	if (old_bar->acq != bar->u_acq) {
-		if (queue == NULL) {
-			// See comment above
-			NVMEV_INFO("acq triggered before aqa, retrying\n");
-			goto out;
-		}
-
 		NVMEV_DEBUG("%s: acq 0x%llx -> 0x%llx\n", __func__, old_bar->acq, bar->u_acq);
 		old_bar->acq = bar->u_acq;
-
-		if (queue->nvme_cq) {
-			kfree(queue->nvme_cq);
-			queue->nvme_cq = NULL;
-		}
-
-		queue->cq_depth = bar->aqa.acqs + 1; /* asqs and acqs are 0-based */
-
-		num_pages =
-			DIV_ROUND_UP(queue->cq_depth * sizeof(struct nvme_completion), PAGE_SIZE);
-		queue->nvme_cq = kcalloc_node(num_pages, sizeof(struct nvme_completion *), GFP_KERNEL, 1);
-		BUG_ON(!queue->nvme_cq && "Error on setup admin completion queue");
-		queue->cq_head = 0;
-		queue->phase = 1;
-
-		for (i = 0; i < num_pages; i++) {
-			queue->nvme_cq[i] =
-				page_address(pfn_to_page(vdev->bar->u_acq >> PAGE_SHIFT) + i);
-		}
-
-		vdev->dbs[1] = vdev->old_dbs[1] = 0;
-
 		goto out;
 	}
 	if (old_bar->cc != bar->u_cc) {
@@ -231,13 +154,74 @@ bool nvmev_proc_bars(void)
 			    bar->u_csts);
 		/* Enable */
 		if (bar->cc.en == 1) {
-			if (vdev->admin_q) {
-				bar->csts.rdy = 1;
+			unsigned int sq_num_pages, cq_num_pages;
+
+			/* Allocate admin_q if not exists */
+			if (!vdev->admin_q) {
+				queue = kzalloc_node(sizeof(struct nvmev_admin_queue), GFP_KERNEL, 1);
+				BUG_ON(!queue);
+				WRITE_ONCE(vdev->admin_q, queue);
 			} else {
-				WARN_ON("Enable device without init admin q");
+				queue = vdev->admin_q;
 			}
+
+			/* Setup ASQ */
+			if (queue->nvme_sq) {
+				kfree(queue->nvme_sq);
+				queue->nvme_sq = NULL;
+			}
+			queue->sq_depth = bar->aqa.asqs + 1;
+			sq_num_pages = DIV_ROUND_UP(queue->sq_depth * sizeof(struct nvme_command), PAGE_SIZE);
+			queue->nvme_sq = kcalloc_node(sq_num_pages, sizeof(struct nvme_command *), GFP_KERNEL, 1);
+			BUG_ON(!queue->nvme_sq);
+			for (i = 0; i < sq_num_pages; i++) {
+				unsigned long pfn = (bar->u_asq >> PAGE_SHIFT) + i;
+				queue->nvme_sq[i] = page_address(pfn_to_page(pfn));
+			}
+
+			/* Setup ACQ */
+			if (queue->nvme_cq) {
+				kfree(queue->nvme_cq);
+				queue->nvme_cq = NULL;
+			}
+			queue->cq_depth = bar->aqa.acqs + 1;
+			cq_num_pages = DIV_ROUND_UP(queue->cq_depth * sizeof(struct nvme_completion), PAGE_SIZE);
+			queue->nvme_cq = kcalloc_node(cq_num_pages, sizeof(struct nvme_completion *), GFP_KERNEL, 1);
+			BUG_ON(!queue->nvme_cq);
+			for (i = 0; i < cq_num_pages; i++) {
+				queue->nvme_cq[i] = page_address(pfn_to_page((bar->u_acq >> PAGE_SHIFT) + i));
+			}
+			queue->cq_head = 0;
+			queue->phase = 1;
+
+			/* Reset doorbells */
+			vdev->dbs[0] = vdev->old_dbs[0] = 0;
+			vdev->dbs[1] = vdev->old_dbs[1] = 0;
+
+			NVMEV_INFO("CC.EN=1: sq_depth=%d, cq_depth=%d, asq=0x%llx, acq=0x%llx\n",
+				queue->sq_depth, queue->cq_depth, bar->u_asq, bar->u_acq);
+
+			bar->csts.rdy = 1;
 		} else if (bar->cc.en == 0) {
+			/* Controller reset - reset state without freeing (avoid race with dispatcher) */
+			int i;
+
 			bar->csts.rdy = 0;
+
+			/* Reset all doorbells to stop command processing */
+			for (i = 0; i < NR_MAX_IO_QUEUE * 2; i++) {
+				vdev->dbs[i] = 0;
+				vdev->old_dbs[i] = 0;
+			}
+
+			/* Reset old_bar so that AQA/ASQ/ACQ changes are detected on re-enable */
+			old_bar->aqa = 0;
+			old_bar->asq = 0;
+			old_bar->acq = 0;
+
+			/* Note: queues will be freed via admin delete_sq/delete_cq commands
+			 * or on next controller enable after host re-creates them */
+			NVMEV_INFO("Controller reset: CC.EN=0, doorbells cleared\n");
 		}
 
 		/* Shutdown */

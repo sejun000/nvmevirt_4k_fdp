@@ -312,6 +312,7 @@ out:
 static struct ppa get_new_page(struct conv_ftl *conv_ftl, uint16_t ruh, uint32_t io_type)
 {
 	struct write_pointer *wpp = __get_wp(conv_ftl, ruh, io_type);
+	struct ssdparams *spp = &conv_ftl->ssd->sp;
 	struct ppa ppa;
 
 	ppa.ppa = 0;
@@ -320,8 +321,15 @@ static struct ppa get_new_page(struct conv_ftl *conv_ftl, uint16_t ruh, uint32_t
 	ppa.g.pg = wpp->pg;
 	ppa.g.blk = wpp->blk;
 	ppa.g.pl = wpp->pl;
-	NVMEV_ASSERT(ppa.g.pl == 0);
 
+	if (ppa.g.ch >= spp->nchs || ppa.g.lun >= spp->luns_per_ch ||
+		ppa.g.blk >= spp->blks_per_pl || ppa.g.pg >= spp->pgs_per_blk) {
+		NVMEV_ERROR("get_new_page OOB: ch=%u/%d lun=%u/%d blk=%u/%d pg=%u/%d ruh=%u io_type=%u\n",
+					ppa.g.ch, spp->nchs, ppa.g.lun, spp->luns_per_ch,
+					ppa.g.blk, spp->blks_per_pl, ppa.g.pg, spp->pgs_per_blk, ruh, io_type);
+	}
+
+	NVMEV_ASSERT(ppa.g.pl == 0);
 	return ppa;
 }
 
@@ -446,6 +454,32 @@ void conv_init_namespace(struct nvmev_ns *ns, uint32_t id, uint64_t size, void *
 
 	NVMEV_INFO("FTL physical space: %lld, logical space: %lld (physical/logical * 100 = %d)\n", size, ns->size,
 			   cpp.pba_pcent);
+
+	/* Print allocation summary */
+	{
+		struct ssdparams *spp = &conv_ftls[0].ssd->sp;
+		uint64_t total_lines = spp->tt_lines;
+		uint64_t reserved_lines = cpp.gc_thres_lines_high;
+		uint64_t usable_lines = total_lines - reserved_lines;
+		uint64_t line_size_bytes = (uint64_t)spp->pgs_per_line * spp->pgsz;
+		uint64_t physical_capacity = (uint64_t)total_lines * line_size_bytes * nr_parts;
+		uint64_t op_capacity = physical_capacity - ns->size;
+		uint64_t op_percent_x100 = (op_capacity * 10000) / physical_capacity;
+
+		NVMEV_INFO("========== FTL Allocation Summary ==========\n");
+		NVMEV_INFO("Total lines (per partition): %llu\n", total_lines);
+		NVMEV_INFO("Reserved lines (gc_thres_high): %llu (NR_MAX_RUH+1=%d+1)\n",
+				   reserved_lines, NR_MAX_RUH);
+		NVMEV_INFO("Usable lines: %llu\n", usable_lines);
+		NVMEV_INFO("Line size: %llu MiB (%lu pages/line * %d bytes/page)\n",
+				   line_size_bytes / (1024*1024), spp->pgs_per_line, spp->pgsz);
+		NVMEV_INFO("Physical capacity (all partitions): %llu GiB\n", physical_capacity / (1024ULL*1024*1024));
+		NVMEV_INFO("Host-visible capacity (ns->size): %llu GiB\n", ns->size / (1024ULL*1024*1024));
+		NVMEV_INFO("OP size: %llu GiB (%llu.%02llu%% of physical, config=%d%%)\n",
+				   op_capacity / (1024ULL*1024*1024), op_percent_x100 / 100, op_percent_x100 % 100,
+				   (int)(cpp.op_area_pcent * 100));
+		NVMEV_INFO("=============================================\n");
+	}
 
 	return;
 }
@@ -572,6 +606,13 @@ static void mark_page_valid(struct conv_ftl *conv_ftl, struct ppa *ppa, uint16_t
 
 	/* update page status */
 	pg = get_pg(conv_ftl->ssd, ppa);
+	if (pg->status != PG_FREE) {
+		NVMEV_ERROR("BUG mark_page_valid: ppa(ch=%u lun=%u pl=%u blk=%u pg=%u) status=%d\n",
+					ppa->g.ch, ppa->g.lun, ppa->g.pl, ppa->g.blk, ppa->g.pg, pg->status);
+		NVMEV_ERROR("  limits: nchs=%d luns=%d pls=%d blks=%d pgs=%d\n",
+					spp->nchs, spp->luns_per_ch, spp->pls_per_lun,
+					spp->blks_per_pl, spp->pgs_per_blk);
+	}
 	NVMEV_ASSERT(pg->status == PG_FREE);
 	pg->status = PG_VALID;
 	pg->ruh = ruh;
@@ -823,9 +864,9 @@ static int do_gc(struct conv_ftl *conv_ftl, bool force)
 	/* update line status */
 	mark_line_free(conv_ftl, &ppa);
 
-	NVMEV_FREEBIE_DEBUG("GC - %u %u %u %u %u %u %u %u %u %u\n",
-		   valid_ruh[0], valid_ruh[1], valid_ruh[2], valid_ruh[3], valid_ruh[4],
-		   invalid_ruh[0], invalid_ruh[1], invalid_ruh[2], invalid_ruh[3], invalid_ruh[4]);
+	NVMEV_FREEBIE_DEBUG("GC - valid[%u %u %u %u %u %u %u %u] invalid[%u %u %u %u %u %u %u %u]\n",
+		   valid_ruh[0], valid_ruh[1], valid_ruh[2], valid_ruh[3], valid_ruh[4], valid_ruh[5], valid_ruh[6], valid_ruh[7],
+		   invalid_ruh[0], invalid_ruh[1], invalid_ruh[2], invalid_ruh[3], invalid_ruh[4], invalid_ruh[5], invalid_ruh[6], invalid_ruh[7]);
 
 	return 0;
 }
@@ -1085,6 +1126,10 @@ bool conv_read (struct nvmev_ns *ns, struct nvmev_request *req, struct nvmev_res
 	return true;
 }
 
+/* RUH write statistics */
+static atomic64_t ruh_write_cnt[NR_MAX_RUH];
+static atomic64_t ruh_total_writes;
+
 bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req, struct nvmev_result *ret)
 {
 	struct conv_ftl *conv_ftls = (struct conv_ftl *)ns->ftls;
@@ -1121,6 +1166,17 @@ bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req, struct nvmev_res
 	struct nand_cmd swr;
 
 	NVMEV_ASSERT(conv_ftls);
+
+	/* RUH statistics (in LBA units, 4K each) */
+	atomic64_add(nr_lba, &ruh_write_cnt[ruh]);
+	if (atomic64_add_return(nr_lba, &ruh_total_writes) % 1000000 == 0) {
+		NVMEV_INFO("RUH stats: [%lld %lld %lld %lld %lld %lld %lld %lld] total=%lld\n",
+			atomic64_read(&ruh_write_cnt[0]), atomic64_read(&ruh_write_cnt[1]),
+			atomic64_read(&ruh_write_cnt[2]), atomic64_read(&ruh_write_cnt[3]),
+			atomic64_read(&ruh_write_cnt[4]), atomic64_read(&ruh_write_cnt[5]),
+			atomic64_read(&ruh_write_cnt[6]), atomic64_read(&ruh_write_cnt[7]),
+			atomic64_read(&ruh_total_writes));
+	}
 	NVMEV_DEBUG("conv_write: start_lpn=%lld, len=%d, end_lpn=%lld", start_lpn, nr_lba, end_lpn);
 	if ((end_lpn / nr_parts) >= spp->tt_pgs) {
 		NVMEV_ERROR("conv_write: lpn passed FTL range(start_lpn=%lld,tt_pgs=%ld)\n", start_lpn, spp->tt_pgs);
@@ -1240,11 +1296,15 @@ void conv_dsm(struct nvmev_ns *ns, struct nvmev_request *req, struct nvmev_resul
 		struct nvme_dsm_range *r = (ranges + i);
 		uint64_t slba = r->slba;
 		uint32_t nlb = r->nlb; // 1's based value
-		uint64_t start_lpn = slba / 8;
-		uint64_t end_lpn = (slba + nlb) / 8;
-		uint64_t lpn, local_lpn;
 		uint32_t nr_parts = ns->nr_parts;
+		struct ssdparams *spp = &conv_ftls[0].ssd->sp;
+		uint64_t start_lpn = slba / spp->secs_per_pg;
+		uint64_t end_lpn = (slba + nlb - 1) / spp->secs_per_pg;
+		uint64_t lpn, local_lpn;
 		struct ppa ppa;
+
+		NVMEV_INFO("DSM TRIM: slba=%llu, nlb=%u, start_lpn=%llu, end_lpn=%llu\n",
+			slba, nlb, start_lpn, end_lpn);
 
 		for (lpn = start_lpn; lpn <= end_lpn; lpn++) {
 			conv_ftl = &conv_ftls[lpn % nr_parts];

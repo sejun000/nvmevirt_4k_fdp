@@ -30,6 +30,7 @@
 #include <linux/filter.h>
 
 #include "nvmev.h"
+#include "pci.h"
 #include "conv_ftl.h"
 #include "simple_ftl.h"
 #include "csd_ftl.h"
@@ -133,6 +134,10 @@ static void nvmev_proc_dbs(unsigned int id)
 	int old_db;
 	int start_qid = 1 + id;
 	int num_dispatchers = vdev->config.nr_dispatchers;
+
+	/* Check if controller is enabled and ready before processing doorbells */
+	if (!vdev->bar->cc.en || !vdev->bar->csts.rdy)
+		return;
 
 	// Admin queue
 	if (id == 0) {

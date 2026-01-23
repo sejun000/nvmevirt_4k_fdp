@@ -729,20 +729,26 @@ int nvmev_proc_io_sq(int sqid, int new_db, int old_db)
 		num_proc += sq->queue_size;
 
 	for (seq = 0; seq < num_proc; seq++) {
-		if (!__nvmev_proc_io(sqid, sq_entry))
-			break;
+		int curr_entry = sq_entry;
+		int next_entry = (sq_entry + 1) % sq->queue_size;
 
-		if (++sq_entry == sq->queue_size) {
-			sq_entry = 0;
+		/* Update sq_head before enqueue so worker sees correct value */
+		sq->sq_head = next_entry;
+
+		if (!__nvmev_proc_io(sqid, curr_entry)) {
+			/* Rollback sq_head on failure */
+			sq->sq_head = curr_entry;
+			break;
 		}
+
+		sq_entry = next_entry;
 		sq->stat.nr_dispatched++;
 		sq->stat.nr_in_flight++;
-		//sq->stat.total_io += io_size;
 	}
 	sq->stat.nr_dispatch++;
 	sq->stat.max_nr_in_flight = max_t(int, sq->stat.max_nr_in_flight, sq->stat.nr_in_flight);
 
-	latest_db = (old_db + seq) % sq->queue_size;
+	latest_db = sq->sq_head;
 	//latest_db = new_db;
 	return latest_db;
 }
@@ -774,6 +780,7 @@ static void __fill_cq_result(struct nvmev_proc_table *proc_entry)
 	unsigned int result0 = proc_entry->result0;
 	unsigned int result1 = proc_entry->result1;
 
+	struct nvmev_submission_queue *sq = vdev->sqes[sqid];
 	struct nvmev_completion_queue *cq = vdev->cqes[cqid];
 	int cq_head;
 	struct nvmev_ns *ns;
@@ -782,7 +789,6 @@ static void __fill_cq_result(struct nvmev_proc_table *proc_entry)
 	spin_lock(&cq->entry_lock);
 
 	if (ns->notify_io_cmd != NULL) {
-		struct nvmev_submission_queue *sq = vdev->sqes[sqid];
 		size_t length = (sq_entry(sq_entry).rw.length + 1) << 12;
 
 		ns->notify_io_cmd(length);
@@ -791,7 +797,7 @@ static void __fill_cq_result(struct nvmev_proc_table *proc_entry)
 	cq_head = cq->cq_head;
 	cq_entry(cq_head).command_id = command_id;
 	cq_entry(cq_head).sq_id = sqid;
-	cq_entry(cq_head).sq_head = sq_entry;
+	cq_entry(cq_head).sq_head = sq->sq_head;
 	cq_entry(cq_head).status = cq->phase | status << 1;
 	cq_entry(cq_head).result0 = result0;
 	cq_entry(cq_head).result1 = result1;

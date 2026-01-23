@@ -3,6 +3,17 @@
 #include "nvmev.h"
 #include "conv_ftl.h"
 
+/* NVMe FDP Statistics Log Page ID (0x22) - not defined in kernel headers */
+#define NVME_LOG_FDP_STATS	0x22
+
+/* NVMe FDP Statistics Log Page structure (512 bytes) */
+struct nvme_fdp_stats_log {
+	__u8 hbmw[16];   /* Host Bytes with Media Written (128-bit) */
+	__u8 mbmw[16];   /* Media Bytes with Media Written (128-bit) */
+	__u8 mbe[16];    /* Media Bytes Erased (128-bit) */
+	__u8 reserved[480];
+};
+
 #define sq_entry(entry_id) queue->nvme_sq[SQ_ENTRY_TO_PAGE_NUM(entry_id)][SQ_ENTRY_TO_PAGE_OFFSET(entry_id)]
 #define cq_entry(entry_id) queue->nvme_cq[CQ_ENTRY_TO_PAGE_NUM(entry_id)][CQ_ENTRY_TO_PAGE_OFFSET(entry_id)]
 
@@ -160,6 +171,8 @@ static void __nvmev_admin_delete_sq(int eid)
 	__make_cq_entry(eid, NVME_SC_SUCCESS);
 }
 
+
+extern volatile uint64_t g_nand_writes;
 /***
  * Log pages
  */
@@ -204,6 +217,25 @@ static void __nvmev_admin_get_log_page(int eid)
 		};
 
 		__memcpy(page, &effects_log, len);
+		break;
+	}
+	case NVME_LOG_FDP_STATS: {
+		struct nvme_fdp_stats_log fdp_stats = { 0 };
+		uint64_t host_written, media_written;
+
+		/* Get current statistics from vdev */
+		host_written = atomic64_read(&vdev->host_write);
+		/* Media written = host writes + GC writes */
+		media_written = host_written + atomic64_read(&vdev->gc_write);
+		//media_written = g_nand_writes * 4096;
+		/* Store as 128-bit little-endian (lower 64 bits only) */
+		memcpy(fdp_stats.hbmw, &host_written, sizeof(uint64_t));
+		memcpy(fdp_stats.mbmw, &media_written, sizeof(uint64_t));
+		/* MBE (Media Bytes Erased) - not tracked, set to 0 */
+
+		__memcpy(page, &fdp_stats, min(len, (uint32_t)sizeof(fdp_stats)));
+		NVMEV_DEBUG("FDP Stats: host_written=%llu, media_written=%llu\n",
+			    host_written, media_written);
 		break;
 	}
 	default:
@@ -510,6 +542,12 @@ void nvmev_proc_admin_sq(int new_db, int old_db)
 	int num_proc = new_db - old_db;
 	int curr = old_db;
 	int seq;
+
+	/* Check if admin queue is initialized */
+	if (!queue || !queue->nvme_sq) {
+		NVMEV_ERROR("Admin SQ not initialized (queue=%p)\n", queue);
+		return;
+	}
 
 	if (num_proc < 0)
 		num_proc += queue->sq_depth;
