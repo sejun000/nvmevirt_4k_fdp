@@ -19,6 +19,13 @@
 #include "nvmev.h"
 #include "ssd.h"
 
+/* Debug counters for buffer tracking */
+atomic64_t g_buffer_allocate_bytes = ATOMIC64_INIT(0);
+atomic64_t g_buffer_enqueue_bytes = ATOMIC64_INIT(0);
+atomic64_t g_buffer_release_bytes = ATOMIC64_INIT(0);
+atomic64_t g_last_pg_in_wordline_bytes = ATOMIC64_INIT(0);
+#define BUFFER_PRINT_INTERVAL (4ULL * 1024 * 1024 * 1024) /* 4GB */
+
 static inline uint64_t __get_ioclock(struct ssd *ssd)
 {
 	return cpu_clock(ssd->cpu_nr_dispatcher);
@@ -33,26 +40,42 @@ void buffer_init(struct buffer *buf, uint32_t size)
 
 uint32_t buffer_allocate(struct buffer *buf, uint32_t size)
 {
+	uint64_t total;
+
 	while (!spin_trylock(&buf->lock)) {
 		cpu_relax();
 	}
 
 	if (buf->remaining < size) {
+		uint32_t curr_remaining = buf->remaining;
 		spin_unlock(&buf->lock);
+		NVMEV_ERROR("BUFFER_ALLOC_FAIL: remaining=%u requested=%u initial=%u\n",
+			curr_remaining, size, buf->initial);
 		return 0;
 	}
 
 	buf->remaining -= size;
 	spin_unlock(&buf->lock);
+
+	total = atomic64_add_return(size, &g_buffer_allocate_bytes);
+	if ((total % BUFFER_PRINT_INTERVAL) < size) {
+		NVMEV_INFO("BUFFER_TRACK: allocate=%llu enqueue=%llu lastpg=%llu release=%llu (GB)\n",
+			total >> 30,
+			atomic64_read(&g_buffer_enqueue_bytes) >> 30,
+			atomic64_read(&g_last_pg_in_wordline_bytes) >> 30,
+			atomic64_read(&g_buffer_release_bytes) >> 30);
+	}
+
 	return size;
 }
 
 bool buffer_release(struct buffer *buf, uint32_t size)
 {
-	while (!spin_trylock(&buf->lock))
-		;
+	while (!spin_trylock(&buf->lock));
 	buf->remaining += size;
 	spin_unlock(&buf->lock);
+
+	atomic64_add(size, &g_buffer_release_bytes);
 
 	return true;
 }

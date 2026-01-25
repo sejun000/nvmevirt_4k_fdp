@@ -525,6 +525,7 @@ void enqueue_gc_io_req(int sqid, unsigned long long nsecs_target, bool is_write,
 	pi->proc_table[entry].gc_cmd = true;
 	pi->proc_table[entry].is_gc_write = is_write;
 	pi->proc_table[entry].gc_io_length = io_length;
+	pi->proc_table[entry].writeback_cmd = false;  /* Clear to prevent double release */
 	mb(); /* IO kthread shall see the updated pe at once */
 
 	__insert_req_into_io(entry, pi);
@@ -579,6 +580,7 @@ void enqueue_writeback_io_req(int sqid, unsigned long long nsecs_target, struct 
 	pi->proc_table[entry].gc_cmd = false;
 	mb(); /* IO kthread shall see the updated pe at once */
 
+	atomic64_add(buffs_to_release, &g_buffer_enqueue_bytes);
 	__insert_req_into_io(entry, pi);
 }
 
