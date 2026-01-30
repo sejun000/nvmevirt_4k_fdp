@@ -284,4 +284,10 @@ bool buffer_release(struct buffer *buf, uint32_t size);
 void buffer_refill(struct buffer *buf);
 
 void adjust_ftl_latency(int target, int lat);
+
+/* Debug counters for buffer tracking */
+extern atomic64_t g_buffer_allocate_bytes;
+extern atomic64_t g_buffer_enqueue_bytes;
+extern atomic64_t g_buffer_release_bytes;
+extern atomic64_t g_last_pg_in_wordline_bytes;
 #endif

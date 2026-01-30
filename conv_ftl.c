@@ -36,10 +36,16 @@ static inline bool last_pg_in_wordline(struct conv_ftl *conv_ftl, struct ppa *pp
 	return (ppa->g.pg % spp->pgs_per_oneshotpg) == (spp->pgs_per_oneshotpg - 1);
 }
 
+static inline uint32_t get_gc_thres_lines(struct conv_ftl *conv_ftl)
+{
+	/* active RUH count + 1 for GC, minimum 2 */
+	uint32_t thres = conv_ftl->active_ruh_count + 1;
+	return (thres < 2) ? 2 : thres;
+}
+
 static inline bool should_gc_high(struct conv_ftl *conv_ftl)
 {
-	struct ssdparams *spp = &conv_ftl->ssd->sp;
-	return conv_ftl->lm.free_line_cnt <= conv_ftl->cp.gc_thres_lines_high;
+	return conv_ftl->lm.free_line_cnt <= get_gc_thres_lines(conv_ftl);
 }
 
 static inline struct ppa get_maptbl_ent(struct conv_ftl *conv_ftl, uint64_t lpn)
@@ -170,15 +176,15 @@ static struct line *get_next_free_line(struct conv_ftl *conv_ftl)
 	struct line_mgmt *lm = &conv_ftl->lm;
 	struct line *curline = NULL;
 
-	curline = list_first_entry(&lm->free_line_list, struct line, entry);
-	if (!curline) {
-		NVMEV_ERROR("No free lines left in VIRT !!!!\n");
+	if (list_empty(&lm->free_line_list)) {
+		NVMEV_ERROR("No free lines left! free_line_cnt=%d\n", lm->free_line_cnt);
 		return NULL;
 	}
 
+	curline = list_first_entry(&lm->free_line_list, struct line, entry);
 	list_del_init(&curline->entry);
 	lm->free_line_cnt--;
-	NVMEV_DEBUG("[%s] free_line_cnt %d\n", __FUNCTION__, lm->free_line_cnt);
+	NVMEV_DEBUG("[%s] free_line_cnt %d, got line %d\n", __FUNCTION__, lm->free_line_cnt, curline->id);
 	return curline;
 }
 
@@ -215,15 +221,23 @@ static void prepare_an_write_pointer(struct conv_ftl *conv_ftl, uint16_t ruh, ui
 
 static void init_write_pointer(struct conv_ftl *conv_ftl, uint32_t io_type)
 {
-	struct write_pointer *wpp;
-	struct line_mgmt *lm = &conv_ftl->lm;
-	struct line *curline = NULL;
-
 	if (io_type == USER_IO) {
+		/* Lazy initialization: don't allocate lines for USER_IO write pointers
+		 * They will be allocated on first write to each RUH */
 		for (int i = 0; i < NR_MAX_RUH; i++) {
-			prepare_an_write_pointer(conv_ftl, i, io_type);
+			conv_ftl->wps[i] = (struct write_pointer){
+				.curline = NULL,  /* Will be allocated lazily */
+				.ch = 0,
+				.lun = 0,
+				.pg = 0,
+				.blk = 0,
+				.pl = 0,
+			};
 		}
+		conv_ftl->active_ruh_count = 0;
+		NVMEV_INFO("USER_IO write pointers initialized (lazy, no lines allocated)\n");
 	} else if (io_type == GC_IO) {
+		/* GC write pointer needs a line immediately */
 		prepare_an_write_pointer(conv_ftl, 0, io_type);
 	}
 }
@@ -291,8 +305,17 @@ static void advance_write_pointer(struct conv_ftl *conv_ftl, uint16_t ruh, uint3
 	/* current line is used up, pick another empty line */
 	check_addr(wpp->blk, spp->blks_per_pl);
 	wpp->curline = NULL;
-	wpp->curline = get_next_free_line(conv_ftl);
-	BUG_ON(!wpp->curline);
+	{
+		int retry = 0;
+		while ((wpp->curline = get_next_free_line(conv_ftl)) == NULL) {
+			if (retry++ >= 3) {
+				NVMEV_ERROR("advance_write_pointer: failed to get free line after GC, ruh=%u\n", ruh);
+				BUG();
+			}
+			NVMEV_INFO("advance_write_pointer: no free line, triggering GC (retry=%d)\n", retry);
+			forground_gc(conv_ftl);
+		}
+	}
 	NVMEV_DEBUG("wpp: got new clean line %d\n", wpp->curline->id);
 
 	wpp->blk = wpp->curline->id;
@@ -314,6 +337,36 @@ static struct ppa get_new_page(struct conv_ftl *conv_ftl, uint16_t ruh, uint32_t
 	struct write_pointer *wpp = __get_wp(conv_ftl, ruh, io_type);
 	struct ssdparams *spp = &conv_ftl->ssd->sp;
 	struct ppa ppa;
+
+	/* Lazy allocation: if curline is NULL, allocate a line now */
+	if (wpp->curline == NULL) {
+		struct line *curline;
+		int retry = 0;
+
+		NVMEV_DEBUG("Lazy alloc for ruh=%u io_type=%u\n", ruh, io_type);
+
+		while ((curline = get_next_free_line(conv_ftl)) == NULL) {
+			if (retry++ >= 3) {
+				NVMEV_ERROR("Failed to get free line after GC for ruh=%u\n", ruh);
+				ppa.ppa = UNMAPPED_PPA;
+				return ppa;
+			}
+			NVMEV_INFO("No free line for ruh=%u, triggering GC (retry=%d)\n", ruh, retry);
+			forground_gc(conv_ftl);
+		}
+
+		wpp->curline = curline;
+		wpp->ch = 0;
+		wpp->lun = 0;
+		wpp->pg = 0;
+		wpp->blk = curline->id;
+		wpp->pl = 0;
+		if (io_type == USER_IO) {
+			conv_ftl->active_ruh_count++;
+		}
+		NVMEV_INFO("Lazy allocated line %d for ruh=%u io_type=%u (active_ruh=%u)\n",
+			curline->id, ruh, io_type, conv_ftl->active_ruh_count);
+	}
 
 	ppa.ppa = 0;
 	ppa.g.ch = wpp->ch;
@@ -1185,8 +1238,11 @@ bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req, struct nvmev_res
 
 	allocated_buf_size = buffer_allocate(wbuf, LBA_TO_BYTE(nr_lba));
 
-	if (allocated_buf_size < LBA_TO_BYTE(nr_lba))
+	if (allocated_buf_size < LBA_TO_BYTE(nr_lba)) {
+		NVMEV_ERROR("conv_write: buffer allocation failed (requested=%lld, allocated=%u)\n",
+			LBA_TO_BYTE(nr_lba), allocated_buf_size);
 		return false;
+	}
 
 	nsecs_latest = nsecs_start;
 	if (req->sq_id != 0xFFFFFFFF) {
@@ -1234,6 +1290,7 @@ bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req, struct nvmev_res
 			nsecs_completed = ssd_advance_nand(conv_ftl->ssd, &swr);
 			nsecs_latest = (nsecs_completed > nsecs_latest) ? nsecs_completed : nsecs_latest;
 
+			atomic64_add(spp->pgs_per_oneshotpg * spp->pgsz, &g_last_pg_in_wordline_bytes);
 			enqueue_writeback_io_req(req->sq_id, nsecs_completed, wbuf, spp->pgs_per_oneshotpg * spp->pgsz);
 		}
 
