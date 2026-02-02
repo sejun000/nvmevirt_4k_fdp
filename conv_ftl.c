@@ -1239,8 +1239,6 @@ bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req, struct nvmev_res
 	allocated_buf_size = buffer_allocate(wbuf, LBA_TO_BYTE(nr_lba));
 
 	if (allocated_buf_size < LBA_TO_BYTE(nr_lba)) {
-		NVMEV_ERROR("conv_write: buffer allocation failed (requested=%lld, allocated=%u)\n",
-			LBA_TO_BYTE(nr_lba), allocated_buf_size);
 		return false;
 	}
 

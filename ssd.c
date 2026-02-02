@@ -47,10 +47,7 @@ uint32_t buffer_allocate(struct buffer *buf, uint32_t size)
 	}
 
 	if (buf->remaining < size) {
-		uint32_t curr_remaining = buf->remaining;
 		spin_unlock(&buf->lock);
-		NVMEV_ERROR("BUFFER_ALLOC_FAIL: remaining=%u requested=%u initial=%u\n",
-			curr_remaining, size, buf->initial);
 		return 0;
 	}
 
