@@ -20,6 +20,17 @@
 #include "ssd_config.h"
 #include "ssd.h"
 
+/* VCT (Virtual Clock Time) constants */
+#define VCT_ENABLE         1     /* 0: single GC block (original), 1: VCT-based GC placement */
+#define VCT_RATIO_NUM      200   /* 2.0 = 200/100 */
+#define VCT_RATIO_DEN      100
+#if (VCT_ENABLE)
+#define VCT_NUM_GROUPS     6
+#else
+#define VCT_NUM_GROUPS     1
+#endif
+#define VCT_MAX            VCT_NUM_GROUPS  /* VCT wraps at NUM_GROUPS, so VCT == GC group */
+
 struct convparams {
 	uint32_t gc_thres_lines;
 	uint32_t gc_thres_lines_high;
@@ -78,10 +89,17 @@ struct conv_ftl {
 	struct ppa *maptbl; /* page level mapping table */
 	uint64_t *rmap; /* reverse mapptbl, assume it's stored in OOB */
 	struct write_pointer wps[NR_MAX_RUH];
-	struct write_pointer gc_wp;
+	struct write_pointer gc_wps[VCT_NUM_GROUPS];
 	struct line_mgmt lm;
 	struct write_flow_control wfc;
 	uint32_t active_ruh_count; /* Number of RUHs with allocated lines */
+	uint32_t active_gc_group_count; /* Number of GC groups with allocated lines */
+
+	/* VCT (Virtual Clock Time) */
+	uint8_t *lpn_vct;            /* LPN -> VCT mapping (3-bit stored as uint8_t) */
+	uint64_t cumulative_writes;  /* cumulative write counter (page units) */
+	uint8_t  current_vct;        /* current VCT value (0~7) */
+	uint64_t vct_threshold;      /* B: writes per VCT increment (page units) */
 };
 
 void conv_init_namespace(struct nvmev_ns *ns, uint32_t id, uint64_t size, void *mapped_addr,

@@ -38,8 +38,8 @@ static inline bool last_pg_in_wordline(struct conv_ftl *conv_ftl, struct ppa *pp
 
 static inline uint32_t get_gc_thres_lines(struct conv_ftl *conv_ftl)
 {
-	/* active RUH count + 1 for GC, minimum 2 */
-	uint32_t thres = conv_ftl->active_ruh_count + 1;
+	/* active RUH + active GC groups + 1, minimum 2 */
+	uint32_t thres = conv_ftl->active_ruh_count + conv_ftl->active_gc_group_count + 1;
 	return (thres < 2) ? 2 : thres;
 }
 
@@ -194,7 +194,7 @@ static struct write_pointer *__get_wp(struct conv_ftl *ftl, uint16_t ruh, uint32
 	if (io_type == USER_IO) {
 		return &ftl->wps[ruh];
 	} else if (io_type == GC_IO) {
-		return &ftl->gc_wp;
+		return &ftl->gc_wps[ruh]; /* ruh = gc_group for GC_IO */
 	} else {
 		NVMEV_ASSERT(0);
 	}
@@ -237,8 +237,13 @@ static void init_write_pointer(struct conv_ftl *conv_ftl, uint32_t io_type)
 		conv_ftl->active_ruh_count = 0;
 		NVMEV_INFO("USER_IO write pointers initialized (lazy, no lines allocated)\n");
 	} else if (io_type == GC_IO) {
-		/* GC write pointer needs a line immediately */
-		prepare_an_write_pointer(conv_ftl, 0, io_type);
+		/* Pre-allocate all GC write pointers (VCT groups) */
+		for (int i = 0; i < VCT_NUM_GROUPS; i++) {
+			prepare_an_write_pointer(conv_ftl, i, io_type);
+		}
+		conv_ftl->active_gc_group_count = VCT_NUM_GROUPS;
+		NVMEV_INFO("GC write pointers initialized (pre-alloc, %d groups, free=%d)\n",
+			VCT_NUM_GROUPS, conv_ftl->lm.free_line_cnt);
 	}
 }
 
@@ -308,6 +313,11 @@ static void advance_write_pointer(struct conv_ftl *conv_ftl, uint16_t ruh, uint3
 	{
 		int retry = 0;
 		while ((wpp->curline = get_next_free_line(conv_ftl)) == NULL) {
+			if (io_type == GC_IO) {
+				NVMEV_ERROR("advance_write_pointer(GC): no free line, group=%u free=%d\n",
+					ruh, conv_ftl->lm.free_line_cnt);
+				BUG();
+			}
 			if (retry++ >= 3) {
 				NVMEV_ERROR("advance_write_pointer: failed to get free line after GC, ruh=%u\n", ruh);
 				BUG();
@@ -345,14 +355,11 @@ static struct ppa get_new_page(struct conv_ftl *conv_ftl, uint16_t ruh, uint32_t
 
 		NVMEV_DEBUG("Lazy alloc for ruh=%u io_type=%u\n", ruh, io_type);
 
-		while ((curline = get_next_free_line(conv_ftl)) == NULL) {
-			if (retry++ >= 3) {
-				NVMEV_ERROR("Failed to get free line after GC for ruh=%u\n", ruh);
-				ppa.ppa = UNMAPPED_PPA;
-				return ppa;
-			}
-			NVMEV_INFO("No free line for ruh=%u, triggering GC (retry=%d)\n", ruh, retry);
-			forground_gc(conv_ftl);
+		if ((curline = get_next_free_line(conv_ftl)) == NULL) {
+			NVMEV_ERROR("get_new_page: no free line for ruh=%u io_type=%u free=%d victim=%d full=%d\n",
+				ruh, io_type, conv_ftl->lm.free_line_cnt,
+				conv_ftl->lm.victim_line_cnt, conv_ftl->lm.full_line_cnt);
+			BUG();
 		}
 
 		wpp->curline = curline;
@@ -363,9 +370,11 @@ static struct ppa get_new_page(struct conv_ftl *conv_ftl, uint16_t ruh, uint32_t
 		wpp->pl = 0;
 		if (io_type == USER_IO) {
 			conv_ftl->active_ruh_count++;
+		} else if (io_type == GC_IO) {
+			conv_ftl->active_gc_group_count++;
 		}
-		NVMEV_INFO("Lazy allocated line %d for ruh=%u io_type=%u (active_ruh=%u)\n",
-			curline->id, ruh, io_type, conv_ftl->active_ruh_count);
+		NVMEV_INFO("Lazy allocated line %d for ruh=%u io_type=%u (active_ruh=%u, active_gc=%u)\n",
+			curline->id, ruh, io_type, conv_ftl->active_ruh_count, conv_ftl->active_gc_group_count);
 	}
 
 	ppa.ppa = 0;
@@ -418,6 +427,28 @@ static void remove_rmap(struct conv_ftl *conv_ftl)
 	vfree(conv_ftl->rmap);
 }
 
+static void init_vct(struct conv_ftl *conv_ftl)
+{
+	struct ssdparams *spp = &conv_ftl->ssd->sp;
+
+	conv_ftl->lpn_vct = vmalloc_node(sizeof(uint8_t) * spp->tt_pgs, 1);
+	memset(conv_ftl->lpn_vct, 0, sizeof(uint8_t) * spp->tt_pgs);
+
+	conv_ftl->current_vct = 0;
+	conv_ftl->cumulative_writes = 0;
+	/* B = device_pages * 1.67 / 6 */
+	conv_ftl->vct_threshold = ((uint64_t)spp->tt_pgs * VCT_RATIO_NUM) /
+				  ((uint64_t)VCT_RATIO_DEN * VCT_NUM_GROUPS);
+
+	NVMEV_INFO("VCT initialized: tt_pgs=%ld, threshold(B)=%llu pages\n",
+		   spp->tt_pgs, conv_ftl->vct_threshold);
+}
+
+static void remove_vct(struct conv_ftl *conv_ftl)
+{
+	vfree(conv_ftl->lpn_vct);
+}
+
 static void conv_init_ftl(struct conv_ftl *conv_ftl, struct convparams *cpp, struct ssd *ssd)
 {
 	/*copy convparams*/
@@ -438,6 +469,10 @@ static void conv_init_ftl(struct conv_ftl *conv_ftl, struct convparams *cpp, str
 	NVMEV_INFO("initialize lines\n");
 	init_lines(conv_ftl);
 
+	/* initialize VCT */
+	NVMEV_INFO("initialize VCT\n");
+	init_vct(conv_ftl);
+
 	/* initialize write pointer, this is how we allocate new pages for writes */
 	NVMEV_INFO("initialize write pointer\n");
 	init_write_pointer(conv_ftl, USER_IO);
@@ -455,6 +490,7 @@ static void conv_remove_ftl(struct conv_ftl *conv_ftl)
 	remove_lines(conv_ftl);
 	remove_rmap(conv_ftl);
 	remove_maptbl(conv_ftl);
+	remove_vct(conv_ftl);
 }
 
 static void conv_init_params(struct convparams *cpp)
@@ -714,19 +750,33 @@ static uint64_t gc_write_page(struct conv_ftl *conv_ftl, struct ppa *old_ppa, ui
 	uint64_t completed_time = 0;
 	uint64_t lpn = get_rmap_ent(conv_ftl, old_ppa);
 
-	NVMEV_ASSERT(valid_lpn(conv_ftl, lpn));
-	new_ppa = get_new_page(conv_ftl, 0, GC_IO);
+	if (!valid_lpn(conv_ftl, lpn)) {
+		NVMEV_ERROR("gc_write_page: INVALID lpn=%llu tt_pgs=%ld\n", lpn, spp->tt_pgs);
+		BUG();
+	}
+
+	/* VCT-based GC group selection */
+	uint8_t page_vct = conv_ftl->lpn_vct[lpn];
+	uint8_t gc_group = page_vct; /* VCT == GC group (0 ~ VCT_MAX-1) */
+
+	if (gc_group >= VCT_NUM_GROUPS) {
+		NVMEV_ERROR("gc_write_page: OOB gc_group=%u VCT_NUM_GROUPS=%d lpn=%llu vct=%u\n",
+			gc_group, VCT_NUM_GROUPS, lpn, page_vct);
+		BUG();
+	}
+
+	new_ppa = get_new_page(conv_ftl, gc_group, GC_IO);
 	/* update maptbl */
 	set_maptbl_ent(conv_ftl, lpn, &new_ppa);
 	/* update rmap */
 	set_rmap_ent(conv_ftl, lpn, &new_ppa);
 
-	// increase_fdp_counter(0, GC_IO);
+	/* VCT is NOT updated during GC - preserve original temperature */
 
 	mark_page_valid(conv_ftl, &new_ppa, ruh);
 
 	/* need to advance the write pointer here */
-	advance_write_pointer(conv_ftl, 0, GC_IO);
+	advance_write_pointer(conv_ftl, gc_group, GC_IO);
 
 	if (cpp->enable_gc_delay) {
 		struct nand_cmd gcw;
@@ -920,6 +970,21 @@ static int do_gc(struct conv_ftl *conv_ftl, bool force)
 	NVMEV_FREEBIE_DEBUG("GC - valid[%u %u %u %u %u %u %u %u] invalid[%u %u %u %u %u %u %u %u]\n",
 		   valid_ruh[0], valid_ruh[1], valid_ruh[2], valid_ruh[3], valid_ruh[4], valid_ruh[5], valid_ruh[6], valid_ruh[7],
 		   invalid_ruh[0], invalid_ruh[1], invalid_ruh[2], invalid_ruh[3], invalid_ruh[4], invalid_ruh[5], invalid_ruh[6], invalid_ruh[7]);
+
+	/* VCT debug: GC wp status */
+	{
+		int i;
+		NVMEV_INFO("GC done: free=%d victim=%d full=%d cur_vct=%u cumul_wr=%llu gc_groups=%u\n",
+			conv_ftl->lm.free_line_cnt, conv_ftl->lm.victim_line_cnt,
+			conv_ftl->lm.full_line_cnt, conv_ftl->current_vct,
+			conv_ftl->cumulative_writes, conv_ftl->active_gc_group_count);
+		for (i = 0; i < VCT_NUM_GROUPS; i++) {
+			struct write_pointer *gwp = &conv_ftl->gc_wps[i];
+			NVMEV_INFO("  gc_wps[%d]: curline=%d ch=%u lun=%u pg=%u blk=%u\n",
+				i, gwp->curline ? gwp->curline->id : -1,
+				gwp->ch, gwp->lun, gwp->pg, gwp->blk);
+		}
+	}
 
 	return 0;
 }
@@ -1144,6 +1209,9 @@ bool conv_read (struct nvmev_ns *ns, struct nvmev_request *req, struct nvmev_res
 				continue;
 			}
 
+			/* update VCT on read */
+			conv_ftl->lpn_vct[local_lpn] = conv_ftl->current_vct % VCT_MAX;
+
 			// aggregate read io in same flash page
 			if (mapped_ppa(&prev_ppa) && is_same_flash_page(conv_ftl, cur_ppa, prev_ppa)) {
 				xfer_size += spp->pgsz;
@@ -1277,6 +1345,14 @@ bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req, struct nvmev_res
 		// increase_fdp_counter(ruh, USER_IO);
 
 		mark_page_valid(conv_ftl, &ppa, ruh_copy);
+
+		/* update VCT for this LPN */
+		conv_ftl->lpn_vct[local_lpn] = conv_ftl->current_vct % VCT_MAX;
+		conv_ftl->cumulative_writes++;
+		if (conv_ftl->cumulative_writes >= conv_ftl->vct_threshold) {
+			conv_ftl->current_vct = (conv_ftl->current_vct + 1) % VCT_MAX;
+			conv_ftl->cumulative_writes -= conv_ftl->vct_threshold;
+		}
 
 		/* need to advance the write pointer here */
 		advance_write_pointer(conv_ftl, ruh, USER_IO);
