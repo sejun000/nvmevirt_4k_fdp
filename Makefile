@@ -12,7 +12,7 @@ obj-m   := nvmev.o
 nvmev-objs := main.o pci.o admin.o io.o dma.o
 
 ccflags-y += -Wno-unused-variable -Wno-error -Wno-declaration-after-statement -Wno-missing-prototypes -Wno-missing-declarations -Wno-frame-larger-than
-ccflags-y += -mindirect-branch=keep -mfunction-return=keep
+ccflags-y += -mindirect-branch=thunk-extern -mfunction-return=thunk-extern
 ccflags-y += -falign-functions=32 -falign-loops=32 -falign-jumps=16
 ccflags-y += -frename-registers
 

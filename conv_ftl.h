@@ -21,7 +21,7 @@
 #include "ssd.h"
 
 /* VCT (Virtual Clock Time) constants */
-#define VCT_ENABLE         1     /* 0: single GC block (original), 1: VCT-based GC placement */
+#define VCT_ENABLE         0     /* 0: single GC block (original), 1: VCT-based GC placement */
 #define VCT_RATIO_NUM      200   /* 2.0 = 200/100 */
 #define VCT_RATIO_DEN      100
 #if (VCT_ENABLE)

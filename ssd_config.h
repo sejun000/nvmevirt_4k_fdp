@@ -85,7 +85,7 @@ enum {
 #define ONESHOT_PAGE_SIZE (FLASH_PAGE_SIZE * 3)
 // #define BLKS_PER_PLN (8192)
 #define BLKS_PER_PLN (0)
-#define BLK_SIZE (96 * 1024 * 1024)  // 96MB -> line_size = 3GB
+#define BLK_SIZE (6 * 1024 * 1024)  // 6MB -> line_size = 192MB (1/16 scale)
 
 #define MAX_CH_XFER_SIZE (16 * 1024) /* to overlap with pcie transfer */
 #define WRITE_UNIT_SIZE (4096)
