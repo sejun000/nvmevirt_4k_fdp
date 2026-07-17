@@ -362,8 +362,8 @@ static void __nvmev_admin_identify_ctrl(int eid)
 	ctrl->oncs = NVME_CTRL_ONCS_DSM; //optional command
 	ctrl->acl = 3; //minimum 4 required, 0's based value
 	ctrl->vwc = 0;
-	snprintf(ctrl->sn, sizeof(ctrl->sn), "CSL_Virt_SN_%02d", 1);
-	snprintf(ctrl->mn, sizeof(ctrl->mn), "CSL_Virt_MN_%02d", 1);
+	snprintf(ctrl->sn, sizeof(ctrl->sn), "CSL_Virt_SN_%02d", vdev->config.inst_id);
+	snprintf(ctrl->mn, sizeof(ctrl->mn), "CSL_Virt_MN_%02d", vdev->config.inst_id);
 	snprintf(ctrl->fr, sizeof(ctrl->fr), "CSL_%03d", 2);
 	ctrl->mdts = vdev->mdts;
 	ctrl->sqes = 0x66;

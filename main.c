@@ -94,6 +94,28 @@ unsigned int debug = 0;
 
 int io_using_dma = true;
 
+/* NVMEV_INSTANCE distinguishes modules built from the same sources. It is set
+ * per-object in the Makefile (-DNVMEV_INSTANCE=2 for nvmev2) and only changes
+ * the *default* values below; each field is still an overridable module param.
+ * Different defaults let `insmod nvmev2.ko memmap_start=.. memmap_size=..` work
+ * without manually respecting proc_name/pci_domain to avoid clashes. */
+#ifndef NVMEV_INSTANCE
+#define NVMEV_INSTANCE 1
+#endif
+
+/* Per-instance parameters so multiple nvmev modules (nvmev, nvmev2, ...)
+ * can be loaded at the same time without clashing on global resources. */
+#if (NVMEV_INSTANCE >= 2)
+char *proc_name = "nvmev2";
+char *dma_chan = "dma4chan1";
+#else
+char *proc_name = "nvmev";
+char *dma_chan = "dma4chan0";
+#endif
+unsigned int pci_domain = NVMEV_PCI_DOMAIN_NUM + (NVMEV_INSTANCE - 1);
+unsigned int pci_bus = NVMEV_PCI_BUS_NUM;
+unsigned int inst_id = NVMEV_INSTANCE;
+
 module_param(memmap_start, ulong, 0444);
 MODULE_PARM_DESC(memmap_start, "Memmap start in GiB");
 module_param(memmap_size, ulong, 0444);
@@ -125,6 +147,19 @@ MODULE_PARM_DESC(csd_cpus, "CSD's CPU list for process, completion(int.) threads
 module_param(slm_cpus, charp, 0444);
 MODULE_PARM_DESC(slm_cpus, "CSD's CPU list for SLM process, completion(int.) threads, Seperated by Comma(,)");
 module_param(debug, uint, 0644);
+
+module_param(io_using_dma, int, 0444);
+MODULE_PARM_DESC(io_using_dma, "Use IOAT DMA engine for large I/O (1=on, 0=memcpy)");
+module_param(proc_name, charp, 0444);
+MODULE_PARM_DESC(proc_name, "procfs dir name under /proc (must be unique per instance)");
+module_param(dma_chan, charp, 0444);
+MODULE_PARM_DESC(dma_chan, "IOAT DMA channel name to grab (must be unique per instance)");
+module_param(pci_domain, uint, 0444);
+MODULE_PARM_DESC(pci_domain, "Virtual PCI domain number (must be unique per instance)");
+module_param(pci_bus, uint, 0444);
+MODULE_PARM_DESC(pci_bus, "Virtual PCI bus number");
+module_param(inst_id, uint, 0444);
+MODULE_PARM_DESC(inst_id, "Instance id used for the controller serial/model strings");
 
 static void nvmev_proc_dbs(unsigned int id)
 {
@@ -493,7 +528,7 @@ void NVMEV_STORAGE_INIT(struct nvmev_dev *vdev)
 	if (vdev->storage_mapped == NULL)
 		NVMEV_ERROR("Failed to map storage memory.\n");
 
-	vdev->proc_root = proc_mkdir("nvmev", NULL);
+	vdev->proc_root = proc_mkdir(proc_name, NULL);
 	vdev->proc_read_times = proc_create("read_times", 0664, vdev->proc_root, &proc_file_fops);
 	vdev->proc_write_times = proc_create("write_times", 0664, vdev->proc_root, &proc_file_fops);
 	vdev->proc_io_units = proc_create("io_units", 0664, vdev->proc_root, &proc_file_fops);
@@ -513,7 +548,7 @@ void NVMEV_STORAGE_FINAL(struct nvmev_dev *vdev)
 	remove_proc_entry("ebpf", vdev->proc_root);
 	remove_proc_entry("freebie", vdev->proc_root);
 
-	remove_proc_entry("nvmev", NULL);
+	remove_proc_entry(proc_name, NULL);
 
 #if (CSD_ENABLE == 1)
 	if (vdev->slm_mapped)
@@ -559,6 +594,10 @@ static bool __load_configs(struct nvmev_config *config)
 	config->write_trailing = write_trailing;
 	config->nr_io_units = nr_io_units;
 	config->io_unit_shift = io_unit_shift;
+
+	config->pci_domain = pci_domain;
+	config->pci_bus = pci_bus;
+	config->inst_id = inst_id;
 
 	config->nr_io_cpu = 0;
 	config->nr_dispatchers = 0;
@@ -673,7 +712,7 @@ static int NVMeV_init(void)
 	NVMEV_NAMESPACE_INIT(vdev);
 
 	if (io_using_dma) {
-		if (ioat_dma_chan_set("dma4chan0") != 0) {
+		if (ioat_dma_chan_set(dma_chan) != 0) {
 			io_using_dma = false;
 			NVMEV_ERROR("Cannot use DMA engine, Fall back to memcpy\n");
 		}

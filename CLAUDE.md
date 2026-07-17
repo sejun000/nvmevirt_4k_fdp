@@ -25,6 +25,41 @@ NVMeVirt 기반 가상 NVMe 디바이스 드라이버 (커널 모듈)
    - `get_partition_map` 함수를 `#if (CSD_ENABLE == 1)` 조건으로 감쌈
    - CSD 관련 case문들 조건부 컴파일 처리
 
+## 듀얼 모듈 (인스턴스 2개 동시 로드)
+
+같은 소스에서 이름이 다른 두 모듈을 빌드한다: `nvmev.ko`(인스턴스1) + `nvmev2.ko`(인스턴스2).
+`nvmev2`의 오브젝트는 `*_2.c` 래퍼(`#include "원본.c"`)로, kbuild가 동일 소스를
+다른 오브젝트 이름으로 빌드해 별도 모듈로 링크하게 한다. `make` 한 번에 둘 다 생성됨.
+
+두 인스턴스가 충돌하지 않도록 아래 전역 자원을 **모듈 파라미터**로 분리했다(기본값은
+기존 동작 유지 → `insmod nvmev.ko ...` 단독 로드는 종전과 동일):
+
+| 파라미터 | 기본값 | 설명 |
+|---------|--------|------|
+| `proc_name`    | `nvmev`     | `/proc/<proc_name>` 디렉터리 (인스턴스마다 달라야 함) |
+| `pci_domain`   | `1`         | 가상 PCI 도메인 (인스턴스마다 달라야 함) |
+| `pci_bus`      | `0x10`      | 가상 PCI 버스 번호 |
+| `inst_id`      | `1`         | 컨트롤러 serial/model 문자열(`CSL_Virt_SN_%02d`)에 사용 |
+| `dma_chan`     | `dma4chan0` | 잡을 IOAT DMA 채널명 (인스턴스마다 달라야 함) |
+| `io_using_dma` | `1`         | 0이면 DMA 대신 memcpy (2번째 인스턴스는 0 권장) |
+
+- **용량 차이**: `NS_CAPACITY_0 == 0`이라 네임스페이스가 storage 전체를 차지 →
+  용량은 전적으로 `memmap_size`(MiB)가 결정. 두 인스턴스에 다른 `memmap_size`만 주면 됨.
+- **메모리 영역**: 두 `memmap` 구간은 겹치면 안 되고, 예약 영역(`memmap=` 커널 cmdline) 안에 있어야 함.
+- 예제 스크립트: `init_two_nvmev.sh` (128GiB + 256GiB).
+
+```bash
+# 인스턴스1: 128GiB
+sudo insmod nvmev.ko  memmap_start=1024 memmap_size=131072 \
+    proc_name=nvmev  pci_domain=1 inst_id=1 dma_chan=dma4chan0 \
+    dispatcher_cpus=24 worker_cpus=26,27,28,29
+# 인스턴스2: 256GiB (용량 다름)
+sudo insmod nvmev2.ko memmap_start=1152 memmap_size=262144 \
+    proc_name=nvmev2 pci_domain=2 inst_id=2 io_using_dma=0 \
+    dispatcher_cpus=25 worker_cpus=30,31,32,33
+# 해제: sudo rmmod nvmev2 nvmev
+```
+
 ## 모듈 로드 명령어
 
 ### CSD 비활성화 상태 (현재)

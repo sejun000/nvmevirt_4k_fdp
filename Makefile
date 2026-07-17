@@ -8,8 +8,18 @@ PWD     := $(shell pwd)
 CONFIG_NVMEVIRT_FDP := y
 #CONFIG_NVMEVIRT_CSD := y
 
-obj-m   := nvmev.o
-nvmev-objs := main.o pci.o admin.o io.o dma.o
+# Build two independently-loadable modules from the same sources:
+#   nvmev.ko  (instance 1)  and  nvmev2.ko (instance 2).
+# nvmev2's objects are *_2.o wrappers that #include the originals, giving
+# kbuild distinct object names so the identical code links into a 2nd module
+# that can be insmod'ed alongside nvmev.ko.
+obj-m   := nvmev.o nvmev2.o
+nvmev-objs  := main.o   pci.o   admin.o   io.o   dma.o
+nvmev2-objs := main_2.o pci_2.o admin_2.o io_2.o dma_2.o
+
+# nvmev2 gets instance-2 default param values (proc_name=nvmev2, pci_domain=2,
+# inst_id=2, ...). Only main.c reads these defaults, so flag only main_2.o.
+CFLAGS_main_2.o += -DNVMEV_INSTANCE=2
 
 ccflags-y += -Wno-unused-variable -Wno-error -Wno-declaration-after-statement -Wno-missing-prototypes -Wno-missing-declarations -Wno-frame-larger-than
 ccflags-y += -mindirect-branch=keep -mfunction-return=keep
@@ -33,15 +43,20 @@ ccflags-y += -fcf-protection=none
 OBJECT_FILES_NON_STANDARD := y
 
 ccflags-$(CONFIG_NVMEVIRT_NVM) += -DBASE_SSD=INTEL_OPTANE
-nvmev-$(CONFIG_NVMEVIRT_NVM) += simple_ftl.o
+nvmev-$(CONFIG_NVMEVIRT_NVM)  += simple_ftl.o
+nvmev2-$(CONFIG_NVMEVIRT_NVM) += simple_ftl_2.o
 
 ccflags-$(CONFIG_NVMEVIRT_SSD) += -DBASE_SSD=SAMSUNG_970PRO
-nvmev-$(CONFIG_NVMEVIRT_SSD) += ssd.o conv_ftl.o pqueue.o channel_model.o
+nvmev-$(CONFIG_NVMEVIRT_SSD)  += ssd.o   conv_ftl.o   pqueue.o   channel_model.o
+nvmev2-$(CONFIG_NVMEVIRT_SSD) += ssd_2.o conv_ftl_2.o pqueue_2.o channel_model_2.o
 
 ccflags-$(CONFIG_NVMEVIRT_FDP) += -DBASE_SSD=SAMSUNG_PM9D3A
-nvmev-$(CONFIG_NVMEVIRT_FDP) += ssd.o conv_ftl.o pqueue.o channel_model.o
+nvmev-$(CONFIG_NVMEVIRT_FDP)  += ssd.o   conv_ftl.o   pqueue.o   channel_model.o
+nvmev2-$(CONFIG_NVMEVIRT_FDP) += ssd_2.o conv_ftl_2.o pqueue_2.o channel_model_2.o
 
 ccflags-$(CONFIG_NVMEVIRT_CSD) += -DCSD_ENABLE=1
+# NOTE: the 2nd instance (nvmev2) does not mirror the CSD/freebie objects yet.
+# To build nvmev2 with CSD, add matching *_2.o wrappers and nvmev2-$(...) lines.
 nvmev-$(CONFIG_NVMEVIRT_CSD) += csd_dispatcher.o csd_ftl.o csd_slm.o buddy.o
 
 nvmev-$(CONFIG_NVMEVIRT_CSD) += user_function/freebie/freebie_repartition.o

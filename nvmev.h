@@ -161,6 +161,11 @@ struct nvmev_config {
 	unsigned int nr_io_units;
 	unsigned int io_unit_shift; // 2^
 
+	/* Per-instance identifiers so multiple nvmev modules can coexist */
+	unsigned int pci_domain;
+	unsigned int pci_bus;
+	unsigned int inst_id;
+
 	unsigned int nr_dispatchers;
 	unsigned int cpu_nr_dispatcher[8];
 	unsigned int nr_io_cpu;
